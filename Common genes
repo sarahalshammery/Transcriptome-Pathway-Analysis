@@ -1,0 +1,66 @@
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(ggrepel)
+library(ReactomePA)
+library(dendextend)
+library(tidyverse)
+library(tm)
+library(plotly)
+
+
+# getting the common genes 
+in_coms<-intersect(data.frame(asdmygenes)[,7],data.frame(toumygenes)[,9])
+commongenes1 <- as.data.frame(in_coms)
+commongenes <- bitr(commongenes1$in_coms, fromType="ENTREZID", toType=c("SYMBOL","ENTREZID"), OrgDb="org.Hs.eg.db")
+
+--> These genes were then exported to STRING --> mapped to a protein-protein interaction network, and further imported into cytoscape. From then, the cytoHubba extention of cytoscape was used to identify 5 hub genes. 
+These genes were then put into their own object: 
+
+hubgenes <- c("ENSG00000043462.7", "ENSG00000100368.9", "ENSG00000101336.8","ENSG00000180353.6","ENSG00000115956.9")
+#extract logcpms from each dataset
+hubgeneslogcpm <- logcpm[hubgenes,] 
+#create a large matrix to allow for graphing for each dataset
+hubmatrix <- hubgeneslogcpm %>% 
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  gather(Number, log2cpm, -rowname)
+hubmatrix <- merge(hubmatrix, Samples, by = c("Number"))
+
+##### testing to see if the hub genes logcpm are normally distributed. 
+hist(hubmatrix,probability=T, main="Histogram of normal data",xlab="Approximately normally distributed data")
+lines(density(hubmatrix),col=2)
+hist(skewed,probability=T, main="Histogram of skewed data",xlab="Very skewed data")lines(density(skewed),col=2)
+#shapiro.test(hubmatrix$log2cpm)
+
+
+
+
+#a figure was mapped for each gene by changing the identifier in the rowname == " ") *** this function includes a significance mapping using a wilcoxon test as the data was not normally normalised. a t.test can alternatively be done. 
+ggplot(hubmatrix %>% filter( rowname == "ENSG00000043462.7"),aes(x = Diagnosis, y = log2cpm, fill = Diagnosis)) + 
+  geom_boxplot(outlier.fill = "red") + scale_fill_manual(values=c("#B53471","#1289A7")) +
+  ggtitle("LCP2") + theme(plot.title = element_text(hjust = 0.5)) + geom_jitter(color="black", size=0.4, alpha=0.9) + 
+  geom_signif(comparisons = list(c("ASD", "Control")),test = "wilcox.test",map_signif_level = TRUE)
+
+
+#figures were combined as follows:
+ggarrange(object,object,object,object,object,object,
+          labels = c("A", "B","C","D","E"),
+          ncol = 5, nrow = 1)
+
+
+#pathways dotplots to both datasets
+#GO for dataset 1
+dotplot(asd_GO %>% filter(direction == "up"), showCategory = 25,title = "Top 25 ASD Gene Ontology enrichments") +scale_color_gradient(high = "#FFF2EE",low = "#FF0A04")
+#GO for dataset 2
+dotplot(tou_GO %>% filter(direction == "up"), showCategory = 25,title = "Top 25 TS Gene Ontology enrichments") +scale_color_gradient(high = "#FFF2EE",low = "#FF0A04")
+#KEGG for dataset 1
+dotplot(asd_kegg %>% filter(direction == "up"), showCategory = 25,title = "Top 25 ASD KEGG enrichments") +scale_color_gradient(high = "#FFF2EE",low = "#FF0A04")
+#KEGG for dataset 2
+dotplot(tou_kegg %>% filter(direction == "up"), showCategory = 25,title = "Top 25 TS KEGG enrichments") +scale_color_gradient(high = "#FFF2EE",low = "#FF0A04")
