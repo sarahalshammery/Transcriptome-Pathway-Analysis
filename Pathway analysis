@@ -1,0 +1,76 @@
+### the following was done for 2 datasets, up until line 57
+
+#create an object that contains the genes and their fold changes 
+foldchanges <- c(tt$EntrezGene.ID , tt$logFC)
+gl <- tt[,"logFC"]
+names(gl) <- as.data.frame(tt[,"EntrezGene.ID"])
+head(gl)
+
+
+#Pathway enrichment analysis
+#GO
+my_GO<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichGO",OrgDb="org.Hs.eg.db",ont="BP",
+                      pvalueCutoff = 0.05,universe=tt$EntrezGene.ID,readable=T)
+dotplot(my_GO, showCategory=50)
+cnetplot(my_GO, color_Edge = T, foldChange = fold_changes, showCategory = 20)
+
+#KEGG
+my_kegg<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichKEGG",organism="hsa",
+                        pvalueCutoff = 0.05,universe=tt$EntrezGene.ID)
+dotplot(my_kegg, showCategory=50)
+cnetplot(my_kegg)
+
+### doing this to colour the cnets as compareCluster does not allow the feature 
+
+#Make an ordered ASD gene list for the cnet plots
+newasdtt <- na.omit(asdtt)
+
+## feature 1: numeric vector
+ASDgeneList <- newasdtt[,8]
+
+## feature 2: named vector
+names(ASDgeneList) <- as.character(newasdtt[,7])
+
+## feature 3: decreasing order
+ASDgeneList <- sort(ASDgeneList, decreasing = TRUE)
+
+#Reactome pathway analysis - same way for GO and KEGG
+ASDREAC <-compareCluster(ENTREZID~direction,data=asdmygenes,fun="enrichPathway",
+                         pvalueCutoff = 0.05, universe=asdtt,readable=T)
+
+#Making a new dataframe with the upreg genes only
+upregASDmygenes <- subset(asdmygenes, direction=='up')
+
+#sanity check to see if we picked the right # of up genes
+summary(as.factor(asdmygenes$direction))
+
+#the enrichpathway function 
+ASDupregreactomeasd <-enrichPathway(upregASDmygenes$ENTREZID,organism = "human",
+                                    pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.2, universe=asdtt$ENTREZID,readable=T)
+
+#This is where we subset the two reactomes 
+ASDupregreactomeasd@result = ASDupregreactomeasd@result[ASDupregreactomeasd@result$ID %in% ASDREAC@compareClusterResult$ID,]
+
+NewASDReac <- ASDupregreactomeasd
+
+#sanity check -- can replace after $ with any column
+ASDREAC@compareClusterResult$pvalue == NewASDReac@result$pvalue
+
+
+#The following code is merging results from analysis of two datasets
+p2 <- cnetplot(NewASDReac, foldChange = ASDgeneList, colorEdge = T) #dataset 1
+p3 <- cnetplot(ASDupregreactomeasd, foldChange = ASDgeneList) #dataset 2
+
+p1 <- merge_result(list(ASD=NewASDReac, TS=NewTOUReac))
+
+dot <- dotplot(p1, showCategory=30, title = "Up-regulated enriched Reactome Pathways") 
+dot <- dot + scale_colour_gradient(high = "#FFF2EE",low = "#FF0A04")
+ggsave(dot, file="combineddotplot.pdf", width=12, height=8) 
+
+p2 <- cnetplot(NewASDReac, foldChange = secondtry, node_label="gene" ,colorEdge = T, title = "ASD")
+p3 <- cnetplot(TOUupregreactome, foldChange = TOUgeneList,node_label="gene" ,colorEdge = T, title = "TS")
+
+#bar plots of reactome results 
+barplot(NewTOUReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04") #very red = more significant, less red = less sig.
+barplot(NewASDReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04")
+
