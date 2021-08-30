@@ -172,14 +172,13 @@ tt$direction=ifelse(tt$logFC>0,"up","down")
 
 #volcano plot
 
-ggplot(tt,aes(x=logFC,y=-log10(FDR), colour=direction)) + geom_point(size=0.5) + scale_colour_manual(values = c("#c0392b","#2980b9"))  +
-  geom_text_repel(data=head(tt,20),aes(label=HGNC.symbol)) + ## symbol needs to be added to gene object
+ASDggplot <- ggplot(asdtt,aes(x=logFC,y=-log10(FDR), colour=direction)) + geom_point(size=0.5) + scale_colour_manual(values = c("#2980b9","#c0392b"))  +
+  geom_text_repel(data=head(asdtt,20),aes(label=HGNC.symbol)) + ## symbol needs to be added to gene object
   geom_hline(yintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
   geom_vline(xintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
   geom_vline(xintercept = -1, linetype="longdash",colour="#A9A9A9", size=0.5) +
-  theme(legend.position="bottom",legend.title =  element_text(face="bold"))
-
-
+  theme(legend.position="bottom",legend.title =  element_text(face="bold")) +  xlim(-5, 6) + ylim(0,6)
+  
 #heatmaps
 heatmapinfo <- d$samples
 heatmapinfo <- heatmapinfo[order(heatmapinfo$group),]
