@@ -1,0 +1,267 @@
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(ggrepel)
+library(ReactomePA)
+library(dendextend)
+library(tidyverse)
+library(tm)
+library(plotly)
+library(ggpubr)
+library(ggfortify)
+library(eulerr)
+library(patchwork)
+library(dplyr)
+library("grid")
+library("gridExtra")
+library("pheatmap")
+library(shiny)
+
+
+# import genes and assign first row as titles, convert data to dataframe
+Genes <- read_csv("")
+Genes <- as.data.frame(Genes)
+
+# import samples and assign first row as titles, convert data to dataframe
+Samples <- read_excel("")
+Samples <- as.data.frame(Samples)
+
+#read in counts from the sample table file name
+counts = readDGE(Samples$My_FileName, columns = c(1,5))$counts
+
+####### cleaning up ######
+#rename count columns
+colnames(counts) = Samples$Number
+#create a copy of counts for figure pre filtering
+copycounts <- counts
+
+
+#getting counts per million and plotting
+mycpm <- cpm(counts)
+
+# keepig cpm more than 0.01 in half of samples (42 in this case)
+keep = rowSums(mycpm >0.01) >=42  
+counts = counts[keep,]
+
+#remove counts not in annotation
+counts<-counts[rownames(counts) %in% Genes$X1,]
+#make unique lookup for annotation based on counts object
+m<-match(rownames(counts),Genes$X1)
+#make data.frame of annotations where stuff should line up
+Genes<-data.frame(Genes[m,],row.names=1)
+
+#creating the DGE list
+d = DGEList(counts = counts, group = Samples$Diagnosis, samples=Samples, genes=Genes)
+
+# normalisation using TMM 
+d <- calcNormFactors(d)
+
+#creating a boxplot of the logCPMs
+logcpm <- cpm(d, log=TRUE)
+
+#AFTER: making a matrix of the genes and then creating columns for each value (ie sample info)
+thematrix <- logcpm %>% 
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  gather(Number, log2cpm, -rowname)
+
+#AFTER: merge the new matrix with the samples info 
+mdata <- merge(thematrix, Samples, by = c("Number"))
+newdata <- mdata
+
+afternorm <- newdata %>% group_by(Diagnosis, Number) %>% mutate(med=median(log2cpm)) %>% ungroup() %>% 
+  arrange(Diagnosis,med) %>% mutate(Number=factor(Number,levels=unique(Number))) %>% 
+  ggplot(aes(x = Number, y = log2cpm, fill = Diagnosis)) +   geom_boxplot(outlier.fill = "green") + 
+  stat_summary(fun="mean", color="white") +   theme(text = element_text(size=15),axis.text.x = element_text(angle=90, hjust=1)) +  
+  geom_hline(yintercept=median(newdata$log2cpm),color = "red") +  scale_fill_manual(values=c("#B53471","#1289A7"))
+
+
+#BEFORE
+unfiltered = DGEList(counts = copycounts, group = Samples$Diagnosis, samples=Samples, genes=Genes)
+unfilteredlogcpm <- cpm(unfiltered, log=TRUE)
+ 
+#Before: making a matrix of the genes and then creating columns for each value (ie sample info) before norm 
+unfiltthematrix <- unfilteredlogcpm %>% 
+  as.data.frame() %>%
+  rownames_to_column() %>%
+  gather(Number, log2cpm, -rowname)
+
+#AFTER: merge the new matrix with the samples info 
+unfilmdata <- merge(unfilteredlogcpm, Samples, by = c("Number"))
+
+beforenorm <- unfilmdata %>% group_by(Diagnosis, Number) %>% mutate(med=median(log2cpm)) %>% ungroup() %>% 
+  arrange(Diagnosis,med) %>% mutate(Number=factor(Number,levels=unique(Number))) %>% 
+  ggplot(aes(x = Number, y = log2cpm, fill = Diagnosis)) +   geom_boxplot(outlier.fill = "green") + 
+  stat_summary(fun="mean", color="white") +   theme(text = element_text(size=15),axis.text.x = element_text(angle=90, hjust=1)) +  
+  geom_hline(yintercept=median(newdata$log2cpm),color = "red") +  scale_fill_manual(values=c("#B53471","#1289A7"))
+
+ggarrange(beforenorm, afternorm+ rremove("x.text"), 
+          labels = c("A", "B"),
+          ncol = 2)
+
+
+#dendogram
+matrixdist <- dist(t(d$counts), method = "euclidean")
+cluster <- hclust(matrixdist)
+cluster <- as.dendrogram(cluster)
+
+
+#ggplot MDS general
+distEuc <- dist(t(scale(d$counts)))
+newmds <- cmdscale(distEuc)
+colnames(newmds) <- c("Dimension1","Dimension2")
+
+ggplot(newmds,aes(x=Dimension1,y=Dimension2, add = "reg.line",conf.int = TRUE, colour = Samples$Diagnosis)) +
+  geom_point(size=3) + scale_color_manual(values=c("#B53471","#1289A7")) +
+  ggtitle("Multidimensional scaling plot") + theme(plot.title = element_text(hjust=0.5,face="bold")) +
+  labs(colour="Condition") 
+
+#PCA plot
+project.pca <- prcomp(t(logcpm))
+
+new <- plot(project.pca)
+new + geom_col(fill = "#1abc9c") +theme_gray() + ylim(c(0,20)) + ylab("% variance explained")
+autoplot(project.pca)
+pca1 <- autoplot(project.pca, data = Samples ,colour ="Diagnosis", size = 5) + scale_color_manual(values=c("#B53471","#1289A7"))
+pca <- pca + scale_color_manual(values=c("#B53471","#1289A7"))
+pca <- pca + ggtitle("Principal Component Analysis") + theme(plot.title = element_text(hjust=0.5,face="bold"))
+
+
+#scree plot
+varExp = (100*project.pca$sdev^2)/sum(project.pca$sdev^2)
+varDF = data.frame(Dimensions=1:length(varExp),
+                   varExp=varExp)
+
+hist <- ggplot(varDF,aes(x=Dimensions,y=varExp)) + 
+  geom_col(fill = "#B53471") + 
+  theme_gray() + ylim(c(0,20)) + ylab("% variance explained")
+hist <- hist + ggtitle("Variance Histogram") + theme(plot.title = element_text(hjust=0.5,face="bold"))
+
+#combine 
+ggarrange(hist, pca+ rremove("x.text"), 
+          labels = c("A", "B"),
+          ncol = 2)
+
+#DGE
+cond=paste0(Samples$Diagnosis)
+design=model.matrix(~0 + cond, data = Samples)
+y<-estimateDisp(d,design)
+fit <- glmQLFit(y, design)
+
+#this is the best contrast matrix that BG recs
+ASD<-makeContrasts(condASD-condControl, levels=design)
+
+#comparing everything 
+qlf<-glmQLFTest(fit, contrast = ASD)
+results <- topTags(qlf, n=1000)
+
+#getting direction for the DEGs
+mygenes <- as.data.frame(results)
+mygenes$direction=ifelse(mygenes$logFC>0,"up","down")
+
+#universe
+tt<-data.frame(topTags(qlf,n=2000000))
+tt$direction=ifelse(tt$logFC>0,"up","down")
+
+
+#volcano plot
+
+ggplot(tt,aes(x=logFC,y=-log10(FDR), colour=direction)) + geom_point(size=0.5) + scale_colour_manual(values = c("#c0392b","#2980b9"))  +
+  geom_text_repel(data=head(tt,20),aes(label=HGNC.symbol)) + ## symbol needs to be added to gene object
+  geom_hline(yintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
+  geom_vline(xintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
+  geom_vline(xintercept = -1, linetype="longdash",colour="#A9A9A9", size=0.5) +
+  theme(legend.position="bottom",legend.title =  element_text(face="bold"))
+
+
+#heatmaps
+heatmapinfo <- d$samples
+heatmapinfo <- heatmapinfo[order(heatmapinfo$group),]
+
+fc <- mygenes$logFC
+fc <- as.matrix(fc)
+
+names(heatmapinfo)[1] <- "Group"
+
+pheatmap::pheatmap(fcs[c(1:1000),], annotation_col = heatmapinfo[1],scale="row", cluster_cols = FALSE, show_rownames=F,
+                   gaps_col= c(42), treeheight_row = 0, treeheight_col = 0, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100))
+
+foldchanges <- c(tt$EntrezGene.ID , tt$logFC)
+gl <- tt[,"logFC"]
+names(gl) <- as.data.frame(tt[,"EntrezGene.ID"])
+head(gl)
+
+
+#Pathway enrichment analysis
+#GO
+my_GO<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichGO",OrgDb="org.Hs.eg.db",ont="BP",
+                      pvalueCutoff = 0.05,universe=tt$EntrezGene.ID,readable=T)
+dotplot(my_GO, showCategory=50)
+cnetplot(my_GO, color_Edge = T, foldChange = fold_changes, showCategory = 20)
+
+#KEGG
+my_kegg<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichKEGG",organism="hsa",
+                        pvalueCutoff = 0.05,universe=tt$EntrezGene.ID)
+dotplot(my_kegg, showCategory=50)
+cnetplot(my_kegg)
+
+### doing this to colour the cnets as compareCluster does not allow the feature 
+
+#Make an ordered ASD gene list for the cnet plots
+newasdtt <- na.omit(asdtt)
+
+## feature 1: numeric vector
+ASDgeneList <- newasdtt[,8]
+
+## feature 2: named vector
+names(ASDgeneList) <- as.character(newasdtt[,7])
+
+## feature 3: decreasing order
+ASDgeneList <- sort(ASDgeneList, decreasing = TRUE)
+
+#Reactome pathway analysis - same way for GO and KEGG
+ASDREAC <-compareCluster(ENTREZID~direction,data=asdmygenes,fun="enrichPathway",
+                         pvalueCutoff = 0.05, universe=asdtt,readable=T)
+
+#Making a new dataframe with the upreg genes only
+upregASDmygenes <- subset(asdmygenes, direction=='up')
+
+#sanity check to see if we picked the right # of up genes
+summary(as.factor(asdmygenes$direction))
+
+#the enrichpathway function 
+ASDupregreactomeasd <-enrichPathway(upregASDmygenes$ENTREZID,organism = "human",
+                                    pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.2, universe=asdtt$ENTREZID,readable=T)
+
+#This is where we subset the two reactomes 
+ASDupregreactomeasd@result = ASDupregreactomeasd@result[ASDupregreactomeasd@result$ID %in% ASDREAC@compareClusterResult$ID,]
+
+NewASDReac <- ASDupregreactomeasd
+
+#sanity check -- can replace after $ with any column
+ASDREAC@compareClusterResult$pvalue == NewASDReac@result$pvalue
+
+
+#did the above code for the other data set (TS) and then merged the main figure as follows:
+p2 <- cnetplot(NewASDReac, foldChange = ASDgeneList, colorEdge = T)
+p3 <- cnetplot(ASDupregreactomeasd, foldChange = ASDgeneList)
+
+p1 <- merge_result(list(ASD=NewASDReac, TS=NewTOUReac))
+
+dot <- dotplot(p1, showCategory=30, title = "Up-regulated enriched Reactome Pathways") 
+dot <- dot + scale_colour_gradient(high = "#FFF2EE",low = "#FF0A04")
+ggsave(dot, file="combineddotplot.pdf", width=12, height=8) 
+
+p2 <- cnetplot(NewASDReac, foldChange = secondtry, node_label="gene" ,colorEdge = T, title = "ASD")
+p3 <- cnetplot(TOUupregreactome, foldChange = TOUgeneList,node_label="gene" ,colorEdge = T, title = "TS")
+
+
+barplot(NewTOUReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04") #very red = more significant, less red = less sig.
+barplot(NewASDReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04")
+
