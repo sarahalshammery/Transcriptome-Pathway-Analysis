@@ -1,2 +1,2 @@
 # ASDTS
-The code presented in this repository is provided for open-access bioinformatic analysis, as a companion piece to the paper " ". The analysis was performed on two datasets (ASD/TS) and then the seperate results were merged for further analysis. 
+The code presented in this repository is provided for open-access bioinformatic analysis, as a companion piece to the paper "Brain transcriptome of autism spectrum disorders and Tourette syndrome defines common targetable inflammatory pathways involving cytokines, complement, and kinase signalling ". The analysis was performed on two datasets (ASD/TS) and then the seperate results were merged for further analysis. a DOI / link to the paper will provided following publication.
