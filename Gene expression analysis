@@ -1,10 +1,11 @@
+# Brain transcriptome paper
+#only the FDr <0.05 analysis. 
+# Complete Batch 2 analysis 
 library(edgeR)
 library(limma)
-library(Glimma)
 library(gplots)
 library(org.Hs.eg.db)
 library(RColorBrewer)
-library(dplyr)
 library(clusterProfiler)
 library(ggplot2)
 library(ggrepel)
@@ -17,176 +18,124 @@ library(ggpubr)
 library(ggfortify)
 library(eulerr)
 library(patchwork)
-library(dplyr)
+library(magrittr)
 library("grid")
 library("gridExtra")
 library("pheatmap")
-library(shiny)
+library(readxl)
+library(factoextra)
 
 
-# import genes and assign first row as titles, convert data to dataframe
-Genes <- read_csv("")
-Genes <- as.data.frame(Genes)
 
-# import samples and assign first row as titles, convert data to dataframe
-Samples <- read_excel("")
-Samples <- as.data.frame(Samples)
+# ASD importing  --------------------------
+#importing 
+ASDsamples <- read_csv("annotations/ASDsamples.csv",col_types = cols(...1 = col_skip()))
+ASDsamples <- as.data.frame(ASDsamples)
+#counts
+ASDcounts <- read_csv("annotations/ASDcounts.csv")
+ASDcounts <- as.data.frame(ASDcounts)
+rownames(ASDcounts) <- ASDcounts$...1
+ASDcounts <- ASDcounts[,-1]
+ASDcounts <- as.matrix(ASDcounts)
+#annot
+ASDannotation <- read_csv("annotations/ASDannotation.csv")
+ASDannotation <- as.data.frame(ASDannotation)
+rownames(ASDannotation) <- ASDannotation$...1
+ASDannotation <- ASDannotation[,-1]
 
-#read in counts from the sample table file name
-counts = readDGE(Samples$My_FileName, columns = c(1,5))$counts
+#Create a DGE list
+ASDDGE <- DGEList(counts = ASDcounts, samples = ASDsamples, genes = ASDannotation)
+#Normalise
+ASDDGE <- calcNormFactors(ASDDGE, method = "TMM")
+#Filter
+keep <- filterByExpr(ASDDGE,group = ASDsamples$Diagnosis)
+ASDDGE <- ASDDGE[keep,]
+#Create a counts per million object
+ASDcpm <- cpm(ASDDGE)
+#Create a LOG counts per million object
+ASDlcpm <- cpm(ASDDGE, log=TRUE)
 
-####### cleaning up ######
-#rename count columns
-colnames(counts) = Samples$Number
-#create a copy of counts for figure pre filtering
-copycounts <- counts
+# ASD DGE 0.05 ------------------------------------------------------------
 
-
-#getting counts per million and plotting
-mycpm <- cpm(counts)
-
-# keepig cpm more than 0.01 in half of samples (42 in this case)
-keep = rowSums(mycpm >0.01) >=42  
-counts = counts[keep,]
-
-#remove counts not in annotation
-counts<-counts[rownames(counts) %in% Genes$X1,]
-#make unique lookup for annotation based on counts object
-m<-match(rownames(counts),Genes$X1)
-#make data.frame of annotations where stuff should line up
-Genes<-data.frame(Genes[m,],row.names=1)
-
-#creating the DGE list
-d = DGEList(counts = counts, group = Samples$Diagnosis, samples=Samples, genes=Genes)
-
-# normalisation using TMM 
-d <- calcNormFactors(d)
-
-#creating a boxplot of the logCPMs
-logcpm <- cpm(d, log=TRUE)
-
-#AFTER: making a matrix of the genes and then creating columns for each value (ie sample info)
-thematrix <- logcpm %>% 
-  as.data.frame() %>%
-  rownames_to_column() %>%
-  gather(Number, log2cpm, -rowname)
-
-#AFTER: merge the new matrix with the samples info 
-mdata <- merge(thematrix, Samples, by = c("Number"))
-newdata <- mdata
-
-afternorm <- newdata %>% group_by(Diagnosis, Number) %>% mutate(med=median(log2cpm)) %>% ungroup() %>% 
-  arrange(Diagnosis,med) %>% mutate(Number=factor(Number,levels=unique(Number))) %>% 
-  ggplot(aes(x = Number, y = log2cpm, fill = Diagnosis)) +   geom_boxplot(outlier.fill = "green") + 
-  stat_summary(fun="mean", color="white") +   theme(text = element_text(size=15),axis.text.x = element_text(angle=90, hjust=1)) +  
-  geom_hline(yintercept=median(newdata$log2cpm),color = "red") +  scale_fill_manual(values=c("#B53471","#1289A7"))
-
-
-#BEFORE
-unfiltered = DGEList(counts = copycounts, group = Samples$Diagnosis, samples=Samples, genes=Genes)
-unfilteredlogcpm <- cpm(unfiltered, log=TRUE)
- 
-#Before: making a matrix of the genes and then creating columns for each value (ie sample info) before norm 
-unfiltthematrix <- unfilteredlogcpm %>% 
-  as.data.frame() %>%
-  rownames_to_column() %>%
-  gather(Number, log2cpm, -rowname)
-
-#AFTER: merge the new matrix with the samples info 
-unfilmdata <- merge(unfilteredlogcpm, Samples, by = c("Number"))
-
-beforenorm <- unfilmdata %>% group_by(Diagnosis, Number) %>% mutate(med=median(log2cpm)) %>% ungroup() %>% 
-  arrange(Diagnosis,med) %>% mutate(Number=factor(Number,levels=unique(Number))) %>% 
-  ggplot(aes(x = Number, y = log2cpm, fill = Diagnosis)) +   geom_boxplot(outlier.fill = "green") + 
-  stat_summary(fun="mean", color="white") +   theme(text = element_text(size=15),axis.text.x = element_text(angle=90, hjust=1)) +  
-  geom_hline(yintercept=median(newdata$log2cpm),color = "red") +  scale_fill_manual(values=c("#B53471","#1289A7"))
-
-ggarrange(beforenorm, afternorm+ rremove("x.text"), 
-          labels = c("A", "B"),
-          ncol = 2)
-
-
-#dendogram
-matrixdist <- dist(t(d$counts), method = "euclidean")
-cluster <- hclust(matrixdist)
-cluster <- as.dendrogram(cluster)
-
-
-#ggplot MDS general
-distEuc <- dist(t(scale(d$counts)))
-newmds <- cmdscale(distEuc)
-colnames(newmds) <- c("Dimension1","Dimension2")
-
-ggplot(newmds,aes(x=Dimension1,y=Dimension2, add = "reg.line",conf.int = TRUE, colour = Samples$Diagnosis)) +
-  geom_point(size=3) + scale_color_manual(values=c("#B53471","#1289A7")) +
-  ggtitle("Multidimensional scaling plot") + theme(plot.title = element_text(hjust=0.5,face="bold")) +
-  labs(colour="Condition") 
-
-#PCA plot
-project.pca <- prcomp(t(logcpm))
-
-new <- plot(project.pca)
-new + geom_col(fill = "#1abc9c") +theme_gray() + ylim(c(0,20)) + ylab("% variance explained")
-autoplot(project.pca)
-pca1 <- autoplot(project.pca, data = Samples ,colour ="Diagnosis", size = 5) + scale_color_manual(values=c("#B53471","#1289A7"))
-pca <- pca + scale_color_manual(values=c("#B53471","#1289A7"))
-pca <- pca + ggtitle("Principal Component Analysis") + theme(plot.title = element_text(hjust=0.5,face="bold"))
-
-
-#scree plot
-varExp = (100*project.pca$sdev^2)/sum(project.pca$sdev^2)
-varDF = data.frame(Dimensions=1:length(varExp),
-                   varExp=varExp)
-
-hist <- ggplot(varDF,aes(x=Dimensions,y=varExp)) + 
-  geom_col(fill = "#B53471") + 
-  theme_gray() + ylim(c(0,20)) + ylab("% variance explained")
-hist <- hist + ggtitle("Variance Histogram") + theme(plot.title = element_text(hjust=0.5,face="bold"))
-
-#combine 
-ggarrange(hist, pca+ rremove("x.text"), 
-          labels = c("A", "B"),
-          ncol = 2)
-
-#DGE
-cond=paste0(Samples$Diagnosis)
-design=model.matrix(~0 + cond, data = Samples)
-y<-estimateDisp(d,design)
+cond=paste0(ASDsamples$Diagnosis)
+design=model.matrix(~0 + cond, data = ASDsamples)
+y<-estimateDisp(ASDDGE,design)
 fit <- glmQLFit(y, design)
 
-#this is the best contrast matrix that BG recs
+#contrast matrix
 ASD<-makeContrasts(condASD-condControl, levels=design)
 
 #comparing everything 
 qlf<-glmQLFTest(fit, contrast = ASD)
-results <- topTags(qlf, n=1000)
-
-#getting direction for the DEGs
-mygenes <- as.data.frame(results)
-mygenes$direction=ifelse(mygenes$logFC>0,"up","down")
-
-#universe
-tt<-data.frame(topTags(qlf,n=2000000))
-tt$direction=ifelse(tt$logFC>0,"up","down")
 
 
-#volcano plot
+ASDresults2 <- qlf %>% topTags(n =  Inf, adjust.method = "BH") %>% as.data.frame() %>%
+  mutate(Expression = case_when(logFC >= 0  & FDR < 0.05 ~ "Up-regulated" , logFC <= 0 & FDR < 0.05 ~ "Down-regulated",TRUE ~ "Unchanged"), Expression = factor(Expression, levels=c("Up-regulated","Down-regulated","Unchanged"))) %>% 
+  rename("symbol" = "HGNC.symbol"  , "ENTREZID" = "EntrezGene.ID" ) %>% mutate_at('ENTREZID', as.character) %>% arrange(FDR)
 
-ASDggplot <- ggplot(asdtt,aes(x=logFC,y=-log10(FDR), colour=direction)) + geom_point(size=0.5) + scale_colour_manual(values = c("#2980b9","#c0392b"))  +
-  geom_text_repel(data=head(asdtt,20),aes(label=HGNC.symbol)) + ## symbol needs to be added to gene object
-  geom_hline(yintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
-  geom_vline(xintercept = 1, linetype="longdash",colour="#A9A9A9", size=0.5) +
-  geom_vline(xintercept = -1, linetype="longdash",colour="#A9A9A9", size=0.5) +
-  theme(legend.position="bottom",legend.title =  element_text(face="bold")) +  xlim(-5, 6) + ylim(0,6)
-  
-#heatmaps
-heatmapinfo <- d$samples
-heatmapinfo <- heatmapinfo[order(heatmapinfo$group),]
 
-fc <- mygenes$logFC
-fc <- as.matrix(fc)
+ASDDGEs2 <- qlf %>% topTags(n =  Inf, p.value = 0.05, adjust.method = "BH") %>% as.data.frame() %>%
+  mutate(Expression = case_when(logFC >= 0  & FDR < 0.05 ~ "Up-regulated" , logFC <= 0 & FDR < 0.05 ~ "Down-regulated",TRUE ~ "Unchanged"), Expression = factor(Expression, levels=c("Up-regulated","Down-regulated","Unchanged"))) %>% 
+  rename("symbol" = "HGNC.symbol"  , "ENTREZID" = "EntrezGene.ID") %>% filter(Expression !='Unchanged') %>% mutate_at('ENTREZID', as.character)  %>% arrange(FDR)
 
-names(heatmapinfo)[1] <- "Group"
+asdvolc <- ggplot(ASDresults2,aes(x=logFC,y=-log10(FDR), colour=Expression)) + geom_point(size=0.5) + scale_colour_manual(values = c("#c0392b","#2980b9","grey"))  +
+  geom_text_repel(data=head(ASDresults2,20),aes(label=symbol), max.overlaps = Inf) + theme(legend.position="bottom",legend.title = element_text(face="bold")) + 
+  ggtitle("ASD - Differentially expressed genes (FDR < 0.05)") + xlim(-2,4) + ylim(0,3.5)
 
-pheatmap::pheatmap(fcs[c(1:1000),], annotation_col = heatmapinfo[1],scale="row", cluster_cols = FALSE, show_rownames=F,
-                   gaps_col= c(42), treeheight_row = 0, treeheight_col = 0, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100))
+# TS importing  ------------------------------------------------------------
+TSsamples <- read_csv("annotations/TSSamples.csv", 
+                      col_types = cols(group = col_skip(), 
+                                       LibraryLayout = col_skip()))
+TSsamples <- as.data.frame(TSsamples)
+#counts
+TScounts <- read_csv("annotations/TSCounts.csv")
+TScounts <- as.data.frame(TScounts)
+rownames(TScounts) <- TScounts$...1
+TScounts <- TScounts[,-1]
+TScounts <- as.matrix(TScounts)
+#annot
+TSannotation <- read_csv("annotations/TSannotation.csv")
+TSannotation <- as.data.frame(TSannotation)
+rownames(TSannotation) <- TSannotation$...1
+TSannotation <- TSannotation[,-1]
+
+#Create a DGE list
+TSDGE <- DGEList(counts = TScounts, samples = TSsamples, genes = TSannotation)
+#Normalise
+TSDGE <- calcNormFactors(TSDGE, method = "TMM")
+#Filter
+keep <- filterByExpr(TSDGE,group = TSsamples$condition)
+TSDGE <- TSDGE[keep,]
+#Create a counts per million object
+TScpm <- cpm(TSDGE)
+#Create a LOG counts per million object
+TSlcpm <- cpm(TSDGE, log=TRUE)
+
+# TS DGE 0.05  ------------------------------------------------------------
+rownames(TSsamples) <- TSsamples$...1
+TScond=paste0(TSsamples$condition)
+TSdesign=model.matrix(~0 + TScond, data = TSsamples)
+TSy<-estimateDisp(TSDGE,TSdesign)
+TSfit <- glmQLFit(TSy, TSdesign)
+
+#this is the best contrast matrix that BG recs
+TS<-makeContrasts(TScondTS-TScondNC, levels=TSdesign)
+#comparing everything 
+TSqlf<-glmQLFTest(TSfit, contrast = TS)
+
+
+TSresults2 <- TSqlf %>% topTags(n =  Inf, adjust.method = "BH") %>% as.data.frame() %>%
+  mutate(Expression = case_when(logFC >= 0  & FDR < 0.05 ~ "Up-regulated" , logFC <= 0 & FDR < 0.05 ~ "Down-regulated",TRUE ~ "Unchanged"), Expression = factor(Expression, levels=c("Up-regulated","Down-regulated","Unchanged"))) %>% 
+  mutate_at('ENTREZID', as.character)  %>% arrange(FDR)
+
+TSDGEs2 <- TSqlf %>% topTags(n =  Inf, p.value = 0.05, adjust.method = "BH") %>% as.data.frame() %>%
+  mutate(Expression = case_when(logFC >= 0 ~ "Up-regulated" , logFC <= 0  ~ "Down-regulated",TRUE ~ "Unchanged"), Expression = factor(Expression, levels=c("Up-regulated","Down-regulated","Unchanged"))) %>%
+  filter(Expression !='Unchanged') %>% mutate_at('ENTREZID', as.character)  %>% arrange(FDR)
+
+
+
+TSvolc <- ggplot(TSresults2,aes(x=logFC,y=-log10(FDR), colour=Expression)) + geom_point(size=0.5) + scale_colour_manual(values = c("#c0392b","#2980b9","grey"))  +
+  geom_text_repel(data=head(TSresults2,20),aes(label=symbol), max.overlaps = Inf) + theme(legend.position="bottom",legend.title = element_text(face="bold")) + 
+  ggtitle("TS - Differentially expressed genes (FDR < 0.05)") + xlim(-2,4) + ylim(0,3.5)
+
+
