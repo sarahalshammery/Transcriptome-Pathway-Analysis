@@ -1,76 +1,265 @@
-### the following was done for 2 datasets, up until line 57
+### the following was done for the 2 datasets
 
-#create an object that contains the genes and their fold changes 
-foldchanges <- c(tt$EntrezGene.ID , tt$logFC)
-gl <- tt[,"logFC"]
-names(gl) <- as.data.frame(tt[,"EntrezGene.ID"])
-head(gl)
+# FDR REAC ASD Pathway   ------------------------------------------------------------
+ASDReactome2 <- enrichPathway(ASDDGEs2$ENTREZID, pvalueCutoff = 0.05, pAdjustMethod = "BH", universe = ASDresults2$ENTREZID, readable = T)
+#filtering
+ASDReactomefiltered2 <- gsfilter(ASDReactome2, by = 'Count', min = 10)
 
+ASDReactomefiltered2@result <- ASDReactomefiltered2@result %>% mutate_at("Description", str_replace, "Homo sapiens\r:", "")
 
-#Pathway enrichment analysis
-#GO
-my_GO<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichGO",OrgDb="org.Hs.eg.db",ont="BP",
-                      pvalueCutoff = 0.05,universe=tt$EntrezGene.ID,readable=T)
-dotplot(my_GO, showCategory=50)
-cnetplot(my_GO, color_Edge = T, foldChange = fold_changes, showCategory = 20)
+ASDx2 <- as.data.frame(ASDReactomefiltered2)
+#give each geneID a separate row
+ASDy2 <- ASDx2 %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(ASDy2)[names(ASDy2) == 'geneID'] <- 'SYMBOL'
 
-#KEGG
-my_kegg<-compareCluster(EntrezGene.ID~direction,data=mygenes,fun="enrichKEGG",organism="hsa",
-                        pvalueCutoff = 0.05,universe=tt$EntrezGene.ID)
-dotplot(my_kegg, showCategory=50)
-cnetplot(my_kegg)
+annotationASD2 <- ASDDGEs2[,c(6,7,12:13)]
+names(annotationASD2)[1] <- "SYMBOL"
+#combine with mygeneslist to see direction
+ASDy2 <- dplyr::inner_join(ASDy2, annotationASD2, by= "SYMBOL")
 
-### doing this to colour the cnets as compareCluster does not allow the feature 
+mysum6 <- cumsum(ASDx2$Count)
+mysum6[10]
 
-#Make an ordered ASD gene list for the cnet plots
-newasdtt <- na.omit(asdtt)
+ASDy2$this <- "ASD"
 
-## feature 1: numeric vector
-ASDgeneList <- newasdtt[,8]
-
-## feature 2: named vector
-names(ASDgeneList) <- as.character(newasdtt[,7])
-
-## feature 3: decreasing order
-ASDgeneList <- sort(ASDgeneList, decreasing = TRUE)
-
-#Reactome pathway analysis - same way for GO and KEGG
-ASDREAC <-compareCluster(ENTREZID~direction,data=asdmygenes,fun="enrichPathway",
-                         pvalueCutoff = 0.05, universe=asdtt,readable=T)
-
-#Making a new dataframe with the upreg genes only
-upregASDmygenes <- subset(asdmygenes, direction=='up')
-
-#sanity check to see if we picked the right # of up genes
-summary(as.factor(asdmygenes$direction))
-
-#the enrichpathway function 
-ASDupregreactomeasd <-enrichPathway(upregASDmygenes$ENTREZID,organism = "human",
-                                    pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.2, universe=asdtt$ENTREZID,readable=T)
-
-#This is where we subset the two reactomes 
-ASDupregreactomeasd@result = ASDupregreactomeasd@result[ASDupregreactomeasd@result$ID %in% ASDREAC@compareClusterResult$ID,]
-
-NewASDReac <- ASDupregreactomeasd
-
-#sanity check -- can replace after $ with any column
-ASDREAC@compareClusterResult$pvalue == NewASDReac@result$pvalue
+#plot on bar chart
+a111 <- ASDy2  %>% ggplot(aes(x= -log(qvalue)/Count, y= reorder(Description, -log(qvalue)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + theme_light() +
+  ggtitle("ASD - Reactome pathways (FDR <0.05 pathways)",subtitle = "DGE parameters: FDR < 0.05, 9 pathways") + 
+  theme(plot.subtitle = element_text(size = 10)) + xlab("-log(FDR)") +  
+  ylab(" ") +  scale_y_discrete(labels=function(x) str_wrap(x, width=50)) + facet_grid(~this)
 
 
-#The following code is merging results from analysis of two datasets
-p2 <- cnetplot(NewASDReac, foldChange = ASDgeneList, colorEdge = T) #dataset 1
-p3 <- cnetplot(ASDupregreactomeasd, foldChange = ASDgeneList) #dataset 2
+ASDgeneList <- ASDDGEs2$logFC
 
-p1 <- merge_result(list(ASD=NewASDReac, TS=NewTOUReac))
+# name the vector
+names(ASDgeneList) <- ASDDGEs2$ENTREZID
 
-dot <- dotplot(p1, showCategory=30, title = "Up-regulated enriched Reactome Pathways") 
-dot <- dot + scale_colour_gradient(high = "#FFF2EE",low = "#FF0A04")
-ggsave(dot, file="combineddotplot.pdf", width=12, height=8) 
+# omit any NA values 
+ASDgeneList<-na.omit(ASDgeneList)
 
-p2 <- cnetplot(NewASDReac, foldChange = secondtry, node_label="gene" ,colorEdge = T, title = "ASD")
-p3 <- cnetplot(TOUupregreactome, foldChange = TOUgeneList,node_label="gene" ,colorEdge = T, title = "TS")
+# sort the list in decreasing order (required for clusterProfiler)
+ASDgeneList = sort(ASDgeneList, decreasing = TRUE)
 
-#bar plots of reactome results 
-barplot(NewTOUReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04") #very red = more significant, less red = less sig.
-barplot(NewASDReac) +scale_fill_gradient(high = "#FFF2EE",low = "#FF0A04")
+ASDReactomefiltered2@result <- ASDReactomefiltered2@result %>% mutate_at("Description", str_replace, "Homo sapiens\r:", "")
+
+cnetplot(ASDReactomefiltered2, showCategory = 10, foldChange = ASDgeneList,label_format = function(x) stringr::str_wrap(x, width=20), colorEdge = T,cex_label_category = 0.5, cex_label_gene = 0.5, )  + 
+  scale_colour_gradient2(name = "fold change", low = "royalblue4", mid = "white", high = "red2") + ggtitle("ASD Reactome pathways (FDR < 0.05)")+theme(plot.title = element_text(hjust= 0.5))
+
+
+x3  <- pairwise_termsim(ASDReactomefiltered2)
+emapplot(x3, group_category = T, cex_label_category = 0.8, cex_category = 1 ,cex_line =0.5 , node_scale =1, showCategory = 100, group_legend = T)
+
+# NEW ASD GO ---------
+EnrichGOASD <- enrichGO(ASDDGEs2$ENTREZID, OrgDb = "org.Hs.eg.db", ont = "BP", pvalueCutoff = 0.05, qvalueCutoff = 0.05, pAdjustMethod = "BH", universe = ASDresults2$ENTREZID  ,readable = T)
+# filtering: from 11 to 11
+EnrichGOASD <- gsfilter(EnrichGOASD, by = 'Count', min = 10)
+
+ASDx3 <- as.data.frame(EnrichGOASD)
+ASDx3 <- ASDx3 %>% arrange(qvalue)
+
+#give each geneID a separate row
+ASDy3 <- ASDx3 %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(ASDy3)[names(ASDy3) == 'geneID'] <- 'SYMBOL'
+
+#combine with mygeneslist to see direction
+ASDy3 <- dplyr::inner_join(ASDy3, annotationASD2, by= "SYMBOL")
+ASDy3 <- ASDy3 %>% arrange(qvalue)
+
+mysum6 <- cumsum(ASDx3$Count)
+mysum6[10]
+
+#plot on bar chart
+ASDy3  %>% slice_head(n=176) %>% ggplot(aes(x= -log(qvalue)/Count, y= reorder(Description, -log(qvalue)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + theme_light() +
+  ggtitle("ASD - GO terms (FDR <0.05 pathways)",subtitle = "DGE parameters: FDR < 0.05, 89 pathways") + 
+  theme(plot.subtitle = element_text(size = 10)) + xlab("-log(pvalue)") +  
+  ylab(" ") +  scale_y_discrete(labels=function(x) str_wrap(x, width=50))
+
+
+x1 <- pairwise_termsim(EnrichGOASD)
+emapplot(x1, group_category = T, cex_label_category = 0.8, cex_category = 1 ,cex_line =0.5 , node_scale =1, showCategory = 100, group_legend = T)
+
+pdf("Supplementary_Figre_3.pdf",         # File name
+    width = 7, height =12 , # Width and height in inches
+    bg = "white",          # Background color
+    colormodel = "cmyk"    # Color model (cmyk is required for most publications
+)          # Paper size
+
+dev.off()
+
+
+
+
+# NEW ASD KEGG ---------
+EnrichKEGGASD <- enrichKEGG(ASDDGEs2$ENTREZID, organism = "hsa", pvalueCutoff = 0.05, qvalueCutoff = 0.05, pAdjustMethod = "BH", universe = ASDresults2$ENTREZID)
+EnrichKEGGASD <- gsfilter(EnrichKEGGASD, by = 'Count', min = 10)
+EnrichKEGGASD <- setReadable(EnrichKEGGASD, OrgDb = "org.Hs.eg.db", keyType = "ENTREZID")
+asdklegg <- EnrichKEGGASD %>% as.data.frame()
+#give each geneID a separate row
+ASDkeggx <- EnrichKEGGASD %>% as.data.frame() %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(ASDkeggx)[names(ASDkeggx) == 'geneID'] <- 'SYMBOL'
+
+
+
+#combine with mygeneslist to see direction
+ASDkeggy <- dplyr::inner_join(ASDkeggx, annotationASD2, by= "SYMBOL")
+
+
+
+mysum6 <- cumsum(ASDkeggx$Count)
+mysum6[10]
+
+ASDkeggy  %>% slice_head(n=147) %>% ggplot(aes(x= -log(p.adjust)/Count, y= reorder(Description, -log(p.adjust)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + theme_light() +
+  ggtitle("ASD - KEGG pathways (FDR <0.05 terms)",subtitle = "DGE parameters: FDR < 0.05, 9 pathways total") + 
+  theme(plot.subtitle = element_text(size = 10)) + xlab("-log(FDR)") +  
+  ylab(" ") + scale_y_discrete(labels=function(x) str_wrap(x, width=80))
+
+
+pdf("Supplementary_Figre_4b.pdf",         # File name
+    width = 7, height =10 , # Width and height in inches
+    bg = "white",          # Background color
+    colormodel = "cmyk"    # Color model (cmyk is required for most publications
+)          # Paper size
+
+
+ASDkeggy %>% ggplot(aes(x= -log(p.adjust)/Count, y= reorder(Description, -log(p.adjust)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + theme_light() +
+  ggtitle("ASD - KEGG pathways (FDR <0.05 terms)",subtitle = "DGE parameters: FDR < 0.05, 9 pathways total") + 
+  theme(plot.subtitle = element_text(size = 10)) + xlab("-log(FDR)") +  
+  ylab(" ") + scale_y_discrete(labels=function(x) str_wrap(x, width=80))
+
+dev.off()
+
+
+x2222 <- pairwise_termsim(EnrichKEGGASD)
+emapplot(x2222, group_category = T, cex_label_category = 0.8, cex_category = 1 ,cex_line =0.5 , node_scale =1, showCategory = 100, group_legend = T)
+
+
+# FDR NEW TS Pathway   ------------------------------------------------------------
+TSReactome2 <- enrichPathway(TSDGEs2$ENTREZID, pvalueCutoff = 0.05, pAdjustMethod = "BH", universe = TSresults2$ENTREZID, readable = T)
+TSReactome2@result <- TSReactome2@result %>% mutate_at("Description", str_replace, "Homo sapiens\r:", "")
+
+#filtering
+TSReactomefiltered2 <- gsfilter(TSReactome2, by = 'Count', min = 10)
+
+TSx2 <- as.data.frame(TSReactomefiltered2)
+#give each geneID a separate row
+TSy2 <- TSx2 %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(TSy2)[names(TSy2) == 'geneID'] <- 'SYMBOL'
+
+annotationTS2 <- TSDGEs2[,c(8,9,14:15)]
+names(annotationTS2)[1] <- "SYMBOL"
+#combine with mygeneslist to see direction
+TSy2 <- dplyr::inner_join(TSy2, annotationTS2, by= "SYMBOL")
+
+mysum6 <- cumsum(TSx2$Count)
+mysum6[10]
+
+TSy2$this <- "TS"
+
+b111 <- TSy2 %>% ggplot(aes(x= -log(qvalue)/Count, y= reorder(Description, -log(qvalue)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + theme_light() +
+  ggtitle("TS - Reactome pathways (FDR <0.05 pathways)",subtitle = "DGE parameters: FDR < 0.05") + 
+  theme(plot.subtitle = element_text(size = 10)) + xlab("-log(pvalue)") +  
+  ylab(" ") +  scale_y_discrete(labels=function(x) str_wrap(x, width=50)) + facet_grid(~this)
+
+
+ggarrange(a111, b111, 
+          labels = c("A", "B"),   common.legend = T,
+          ncol = 2)
+
+
+# we want the log2 fold change 
+TSgeneList <- TSDGEs2$logFC
+
+# name the vector
+names(TSgeneList) <- TSDGEs2$ENTREZID
+
+# omit any NA values 
+TSgeneList<-na.omit(TSgeneList)
+
+# sort the list in decreasing order (required for clusterProfiler)
+TSgeneList = sort(TSgeneList, decreasing = TRUE)
+
+cnetplot(TSReactomefiltered2,showCategory = 10, foldChange = TSgeneList, colorEdge = T,cex_label_category = 0.5, cex_label_gene = 0.5)  + 
+  scale_colour_gradient2(name = "fold change", low = "royalblue4", mid = "white", high = "red2") + ggtitle("TS Reactome pathways (FDR < 0.05)")+theme(plot.title = element_text(hjust= 0.5))
+
+
+# NEW TS GO ---------
+EnrichGOTS <- enrichGO(TSDGEs2$ENTREZID, "org.Hs.eg.db", ont = "BP", pvalueCutoff = 0.05, qvalueCutoff = 0.05, pAdjustMethod = "BH", universe = TSresults2$ENTREZID  ,readable = T)
+# filtering: from 11 to 11
+EnrichGOTS2 <- gsfilter(EnrichGOTS, by = 'Count', min = 10)
+tsgo1 <- EnrichGOTS2 %>% as.data.frame()
+#give each geneID a separate row
+TSgox <- EnrichGOTS %>% as.data.frame() %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(TSgox)[names(TSgox) == 'geneID'] <- 'SYMBOL'
+
+#combine with mygeneslist to see direction
+TSgoy <- dplyr::inner_join(TSgox, annotationTS2, by= "SYMBOL")
+
+
+mysum6 <- cumsum(tsgo1$Count)
+mysum6[50]
+
+TSgoy  %>% slice_head(n=297) %>% ggplot(aes(x= -log(p.adjust)/Count, y= reorder(Description, -log(p.adjust)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + 
+  ggtitle("TS - GO terms (FDR <0.05 terms)",subtitle = "DGE parameters: FDR Value < 0.05, 138 pathways total") + 
+  theme(plot.title.position= "plot") + xlab("-log(pvalue)") +  
+  ylab("Pathways") + theme_light() + scale_y_discrete(labels=function(x) str_wrap(x, width=60))
+
+
+TSgoy  %>% slice_head(n=1508) %>% ggplot(aes(x= -log(p.adjust)/Count, y= reorder(Description, -log(p.adjust)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + 
+  ggtitle("TS - GO terms (FDR <0.05 terms)",subtitle = "DGE parameters: FDR Value < 0.05, 138 pathways total") + 
+  theme(plot.title.position= "plot") + xlab("-log(pvalue)") +  
+  ylab("Pathways") + theme_light() + scale_y_discrete(labels=function(x) str_wrap(x, width=90))
+
+
+
+y2 <- pairwise_termsim(EnrichGOTS2)
+emapplot(y2, group_category = T, cex_label_category = 0.8, cex_category = 1 ,cex_line =0.5 , node_scale =1, showCategory = 100, group_legend = T)
+
+pdf("Supplementary_Figre_5a.pdf",         # File name
+    width = 9, height =12 , # Width and height in inches
+    bg = "white",          # Background color
+    colormodel = "cmyk"    # Color model (cmyk is required for most publications
+)          # Paper size
+
+dev.off()
+
+# NEW TS KEGG ---------
+EnrichKEGGTS2 <- enrichKEGG(TSDGEs2$ENTREZID, organism = "hsa", pvalueCutoff = 0.05, qvalueCutoff = 0.05, pAdjustMethod = "BH", universe = TSresults2$ENTREZID)
+EnrichKEGGTS2 <- gsfilter(EnrichKEGGTS2, by = 'Count', min = 10)
+EnrichKEGGTS2 <- setReadable(EnrichKEGGTS2, OrgDb = "org.Hs.eg.db", keyType = "ENTREZID")
+tskeg2 <- EnrichKEGGTS2 %>% as.data.frame()
+#give each geneID a separate row
+TSkeggx2 <- EnrichKEGGTS2 %>% as.data.frame() %>% mutate(geneID = strsplit(geneID, "/")) %>% unnest(geneID)
+names(TSkeggx2)[names(TSkeggx2) == 'geneID'] <- 'SYMBOL'
+
+
+
+#combine with mygeneslist to see direction
+TSkeggy2 <- dplyr::inner_join(TSkeggx2, annotationTS2, by= "SYMBOL")
+
+
+mysum6 <- cumsum(tskeg2$Count)
+mysum6[10]
+
+TSkeggy2  %>% slice_head(n=139) %>% ggplot(aes(x= -log(p.adjust)/Count, y= reorder(Description, -log(p.adjust)), fill=Expression), label = paste0(Expression)) +
+  geom_bar(stat="identity", position="stack") + 
+  scale_fill_manual(values= c("red2","royalblue4")) + 
+  ggtitle("TS - KEGG pathways (FDR <0.05 terms)",subtitle = "DGE parameters: P Value < 0.05, and Log2FC threshold of 0.5, 35 pathways total") + 
+  theme(plot.title.position= "plot") + xlab("-log(pvalue)") +  
+  ylab("Pathways") + theme_light() + scale_y_discrete(labels=function(x) str_wrap(x, width=80))
+
+
 
